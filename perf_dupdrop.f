@@ -48,32 +48,13 @@
 : MAKE-DUPDROP	( n -- )
 	BEGIN ?DUP WHILE ' DUP , ' DROP , 1- REPEAT
 ;
-
+: RDTSC 1 1 ;
 ( Now the actual test routine. )
 : TEST		( -- startlsb startmsb endlsb endmsb )
 	RDTSC			( Start time )
 	[ 1000 MAKE-DUPDROP ]	( 1000 * DUP DROP )
 	RDTSC			( End time )
 ;
-
-: RUN ['] TEST PERFORM-TEST ;
-RUN
-
-( ---------------------------------------------------------------------- )
-( Try the inlined alternative. )
-
-( Inline the assembler primitive (cfa) n times. )
-: *(INLINE) ( cfa n -- )
-	BEGIN ?DUP WHILE OVER (INLINE) 1- REPEAT DROP
-;
-
-: DUPDROP INLINE DUP INLINE DROP ;CODE
-
-: TEST
-	INLINE RDTSC
-	[ S" DUPDROP" FIND >CFA 1000 *(INLINE) ]
-	INLINE RDTSC
-;CODE
 
 : RUN ['] TEST PERFORM-TEST ;
 RUN

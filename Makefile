@@ -10,9 +10,14 @@ all:	jonesforth
 jonesforth: jonesforth.S
 	gcc -nostdlib -static $(BUILD_ID_NONE) -o $@ $<
 
-run:
+run:    jonesforth
 	cat jonesforth.f $(PROG) - | ./jonesforth
 
+bench: jonesforth
+	cat jonesforth.f $(PROG) test.f | time ./jonesforth
+
+control: jonesforth
+	cat jonesforth.f $(PROG) | time ./jonesforth
 clean:
 	rm -f jonesforth perf_dupdrop *~ core .test_*
 

@@ -31,14 +31,15 @@
         #include <asm/unistd.h>
 
 @ Reserve three special registers:
-@ DSP (r13) points to the top of the data stack
+@ ADSP (r13) points to (almost) the top of the data stack
+@ TOP (r12) Contains the top of data stack
 @ RSP (r11) points to the top of the return stack
 @ IP (r10) points to the next forth word that will be executed
 
-        #define DSP r13
+        #define ADSP r13
         #define RSP r11
         #define IP r10
-
+	#define TOP r12
 @ Define stdin, stdout, stderr file descriptors numbers
 
         .set stdin, 0
@@ -68,12 +69,22 @@
         ldr \reg, [RSP], #4
         .endm
 
+        .macro push1
+        str TOP, [ADSP, #-4]!
+        .endm
+
         .macro push reg
-        str \reg, [DSP, #-4]!
+        push1
+	mov TOP, \reg
+        .endm
+
+        .macro pop1
+        ldr TOP, [ADSP], #4
         .endm
 
         .macro pop reg
-        ldr \reg, [DSP], #4
+	mov \reg, TOP
+        pop1
         .endm
 
 @ DOCOL is the assembly subroutine that is called
@@ -96,7 +107,8 @@ DOCOL:
         .global _start
 _start:
         ldr r0, =var_S0
-        str DSP, [r0]           @ Save the original stack position in var_S0
+        str ADSP, [r0]           @ Save the original stack position in var_S0
+	mov TOP, #0			@ Dummy top of stack.
         ldr RSP, =return_stack_top      @ Set the initial return stack position
         bl  set_up_data_segment         @ Set up the data segment
         ldr IP, =cold_start             @ Make the IP point to cold_start
@@ -186,8 +198,8 @@ code_\label :                   @ assembler code follows
 
         .macro defvar name, namelen, flags=0, label, initial=0
         defcode \name,\namelen,\flags,\label
-        ldr r0, =var_\name
-        push r0
+	push1
+        ldr TOP, =var_\name
         NEXT
         .data
         .align 2
@@ -199,8 +211,8 @@ var_\name :
 
         .macro defconst name, namelen, flags=0, label, value
         defcode \name,\namelen,\flags,\label
-        ldr r0, =\value
-        push r0
+	push1
+        ldr TOP, =\value
         NEXT
         .endm
 
@@ -329,230 +341,227 @@ div0msgend:
 @ DROP ( a -- ) drops the top element of the stack
 
 defcode "DROP",4,,DROP
-        pop r0 @( )
+        ldr TOP, [ADSP], #4
         NEXT
 
 @ SWAP ( a b -- b a ) swaps the two top elements
 
 defcode "SWAP",4,,SWAP
         @ ( a b -- )
-        pop r0          @  ( a ) , r0 = b
-        pop r1          @  (  ) , r0 = b, r1 = a
-        push r0         @  ( b  ) , r0 = b, r1 = a
-        push r1         @  ( b a  ) , r0 = b, r1 = a
+        ldr r0, [ADSP]
+	str TOP, [ADSP]
+	mov TOP, r0
         NEXT
 
 @ DUP ( a -- a a ) duplicates the top element
 
 defcode "DUP",3,,DUP
         @ ( a -- )
-        pop r0          @ (  ) , r0 = a
-        push r0         @ ( a  ) , r0 = a
-        push r0         @ ( a a  ) , r0 = a
+	str TOP, [ADSP, #-4]!
         NEXT
 
 @ OVER ( a b c -- a b c b ) pushes the second element on top
 
 defcode "OVER",4,,OVER
-        @ ( a b c) r0 = b we take the element at DSP + 4
+        @ ( a b c) r0 = b we take the element at ADSP + 4
         @ and since DSP is the top of the stack we will load
         @ the second element of the stack in r0
-        ldr r0, [DSP, #4]
+        ldr r0, [ADSP]
         push r0         @ ( a b c b )
         NEXT
 
 @ ROT ( a b c -- b c a) rotation
 
 defcode "ROT",3,,ROT
-        pop r0          @ ( a b ) r0 = c
-        pop r1          @ ( a ) r1 = b
-        pop r2          @ ( ) r2 = a
-        push r1         @ ( b )
-        push r0         @ ( b c )
-        push r2         @ ( b c a )
+	ldr r0, [ADSP]
+	str TOP, [ADSP]
+	ldr TOP, [ADSP, #4]
+	str r0, [ADSP, #4]
         NEXT
 
 @ -ROT ( a b c -- c a b ) backwards rotation
 
 defcode "-ROT",4,,NROT
-        pop r0          @ ( a b ) r0 = c
-        pop r1          @ ( a ) r1 = b
-        pop r2          @ ( ) r2 = a
-        push r0         @ ( c )
-        push r2         @ ( c a )
-        push r1         @ ( c a b )
+	ldr r0, [ADSP, #4]
+	str TOP, [ADSP, #4]
+	ldr TOP, [ADSP]
+	str r0, [ADSP]
         NEXT
 
 @ ?DUP ( 0 -- 0 | a -- a a ) duplicates if non-zero
 
 defcode "?DUP", 4,,QDUP
         @ (x --)
-        ldr r0, [DSP]   @ r0 = x
-        cmp r0, #0      @ test if x==0
-        beq 1f          @ if x==0 we jump to 1
-        push r0         @ ( a a ) it's now duplicated
-        1: NEXT         @ ( a a / 0 )
+        cmp TOP, #0     @ test if x==0
+	strne TOP, [ADSP, #-4]! @ ( a a ) it's now duplicated
+        NEXT         @ ( a a / 0 )
 
 @ 1+ ( a | a+1 ) increments the top element
 
 defcode "1+",2,,INCR
-        pop r0
-        add r0,r0,#1
-        push r0
+        add TOP,TOP,#1
         NEXT
 
 @ 1- ( a | a-1 ) decrements the top element
 
 defcode "1-",2,,DECR
-        pop r0
-        sub r0,r0,#1
-        push r0
+        sub TOP,TOP,#1
+        NEXT
+
+@ 2+ ( a | a+2 ) increments the top element
+
+defcode "2+",2,,INCR2
+        add TOP,TOP,#2
+        NEXT
+
+@ 2- ( a | a-2 ) decrements the top element
+
+defcode "2-",2,,DECR2
+        sub TOP,TOP,#2
+        NEXT
+
+@ 2* ( a | a*2 ) increments the top element
+
+defcode "2*",2,,MUL2
+        lsl TOP,TOP,#1
+        NEXT
+
+@ 2/ ( a | a/2 ) increments the top element
+
+defcode "2/",2,,DIV2
+        asr TOP,TOP,#1
         NEXT
 
 @ 4+ ( a | a+4 ) increments by 4 the top element
 
 defcode "4+",2,,INCR4
-        pop r0
-        add r0,r0,#4
-        push r0
+        add TOP,TOP,#4
         NEXT
 
 @ 4- ( a | a-4 ) decrements by 4 the top element
 
 defcode "4-",2,,DECR4
-        pop r0
-        sub r0,r0,#4
-        push r0
+        sub TOP,TOP,#4
         NEXT
 
 @ + ( a b | a+b)
 
 defcode "+",1,,ADD
-        pop r0
-        pop r1
-        add r0,r0,r1
-        push r0
+        ldr r0, [ADSP], #4
+        add TOP,TOP,r0
         NEXT
 
-@ + ( a b | a-b)
+@ - ( a b | a-b)
 
 defcode "-",1,,SUB
-        pop r1
-        pop r0
-        sub r0,r0,r1
-        push r0
+	ldr r0, [ADSP], #4
+        sub TOP,r0,TOP
         NEXT
 
 @ + ( a b | a*b)
 
 defcode "*",1,,MUL
-        pop r0
-        pop r1
-        mul r2,r0,r1
-        push r2
+        ldr r0, [ADSP], #4
+        mul TOP,TOP,r0
         NEXT
 
 @ = ( a b | p ) where p is 1 when a and b are equal (0 otherwise)
 
 defcode "=",1,,EQU
-        pop r1
-        pop r0
-        cmp r0, r1
-        moveq r0, #1
-        movne r0, #0
-        push r0
+        ldr r0, [ADSP], #4
+        cmp r0, TOP
+        moveq TOP, #1
+        movne TOP, #0
         NEXT
 
 @ <> ( a b | p) where p = a <> b
 
 defcode "<>",2,,NEQU
-        pop r1
-        pop r0
-        cmp r0, r1
-        movne r0, #1
-        moveq r0, #0
-        push r0
+        ldr r0, [ADSP], #4
+        cmp r0, TOP
+        movne TOP, #1
+        moveq TOP, #0
         NEXT
 
 @ < ( a b | p) where p = a < b
 
 defcode "<",1,,LT
-        pop r1
-        pop r0
-        cmp r0, r1
-        movlt r0, #1
-        movge r0, #0
-        push r0
+        ldr r0, [ADSP], #4
+        cmp r0, TOP
+        movlt TOP, #1
+        movge TOP, #0
         NEXT
 
-@ < ( a b | p) where p = a < b
+@ > ( a b | p) where p = a > b
 
 defcode ">",1,,GT
-        pop r1
-        pop r0
-        cmp r0, r1
-        movgt r0, #1
-        movle r0, #0
-        push r0
+        ldr r0, [ADSP], #4
+        cmp r0, TOP
+        movgt TOP, #1
+        movle TOP, #0
         NEXT
 
 @ <= ( a b | p) where p = a <= b
 
 defcode "<=",2,,LE
-        pop r1
-        pop r0
-        cmp r0, r1
-        movle r0, #1
-        movgt r0, #0
-        push r0
+        ldr r0, [ADSP], #4
+        cmp r0, TOP
+        movle TOP, #1
+        movgt TOP, #0
         NEXT
 
 @ >= ( a b | p) where p = a >= b
 
 defcode ">=",2,,GE
-        pop r1
-        pop r0
-        cmp r0, r1
-        movge r0, #1
-        movlt r0, #0
-        push r0
+        ldr r0, [ADSP], #4
+        cmp r0, TOP
+        movge TOP, #1
+        movlt TOP, #0
         NEXT
 
 @ AND ( a b | a&b) bitwise and
 
 defcode "AND",3,,AND
-        pop r0
-        pop r1
-        and r0, r1, r0
-        push r0
+        ldr r0, [ADSP], #4
+        and TOP, TOP, r0
         NEXT
 
 @ OR ( a b | a|b) bitwise or
 
 defcode "OR",2,,OR
-        pop r0
-        pop r1
-        orr r0, r1, r0
-        push r0
+        ldr r0, [ADSP], #4
+        orr TOP, TOP, r0
         NEXT
 
 @ XOR ( a b | a^b) bitwise xor
 
 defcode "XOR",3,,XOR
-        pop r0
-        pop r1
-        eor r0, r1, r0
-        push r0
+        ldr r0, [ADSP], #4
+        eor TOP, TOP, r0
         NEXT
 
 @ INVERT ( a | ~a ) bitwise not
 
 defcode "INVERT",6,,INVERT
-        pop r0
-        mvn r0, r0
-        push r0
+        mvn TOP, TOP
         NEXT
 
+defcode "ABS",3,,ABS
+        cmp TOP, #0
+	rsblt TOP, #0
+        NEXT
+
+defcode "0=",2,,EQU0
+        cmp TOP, #0
+        moveq TOP, #1
+        movne TOP, #0
+        NEXT
+
+defcode "0<>",3,,NEQU0
+        cmp TOP, #0
+        movne TOP, #1
+        moveq TOP, #0
+        NEXT
 
 
 @ LIT is used to compile literals in forth word.
@@ -560,40 +569,37 @@ defcode "INVERT",6,,INVERT
 @ into the stack and skips it (since the literal is not executable).
 
 defcode "LIT", 3,, LIT
-        ldr r1, [IP], #4
-        push r1
+	push1
+        ldr TOP, [IP], #4
         NEXT
 
 @ ! ( value address -- ) write value at address
 
 defcode "!",1,,STORE
         pop r0
-        pop r1
-        str r1, [r0]
+        str TOP, [r0]
+	pop1
         NEXT
 
 @ @ ( address -- value ) reads value from address
 
 defcode "@",1,,FETCH
-        pop r1
-        ldr r0, [r1]
-        push r0
+        ldr TOP, [TOP]
         NEXT
 
 @ C! and @! are the same for bytes
 
 defcode "C!",2,,STOREBYTE
         pop r0
-        pop r1
-        strb r1, [r0]
+        strb TOP, [r0]
+	pop1
         NEXT
 
 
 defcode "C@",2,,FETCHBYTE
-        pop r0
         mov r1, #0
-        ldrb r1, [r0]
-        push r1
+        ldrb r1, [TOP]
+	mov TOP, r1
         NEXT
 
 
@@ -668,7 +674,7 @@ defcode "RDROP",5,,RDROP
         add RSP,RSP,#4
         NEXT
 
-@ RSP@, RSP!, DSP@, DSP! manipulate the return and data stack pointers
+@ RSP@, RSP!, ADSP@, ADSP! manipulate the return and data stack pointers
 
 defcode "RSP@",4,,RSPFETCH
         push RSP
@@ -678,14 +684,14 @@ defcode "RSP!",4,,RSPSTORE
         pop RSP
         NEXT
 
-defcode "DSP@",4,,DSPFETCH
-        mov r0, DSP
+defcode "ADSP@",5,,DSPFETCH @ This is the next-to-top of the data stack
+        mov r0, ADSP
         push r0
         NEXT
 
-defcode "DSP!",4,,DSPSTORE
+defcode "ADSP!",5,,DSPSTORE
         pop r0
-        mov r0, DSP
+        mov r0, ADSP
         NEXT
 
 @ KEY ( -- c ) Reads a key from the user
@@ -772,7 +778,7 @@ emit_scratch:
 
 defcode "WORD",4,,WORD
         bl _WORD
-        push r0                 @ adress
+        push r0                 @ address
         push r1                 @ length
         NEXT
 

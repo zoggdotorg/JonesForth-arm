@@ -3,10 +3,8 @@
 \ The following words were defined natively on the original Richard W.M. Jones
 \ x86 forth. In this ARM port, they are defined in forth.
 
-: 0= 0 = ;
 : 0> 0 > ;
 : 0< 0 < ;
-: 0<> 0 <> ;
 : 0<= 0 <= ;
 : 0>= 0 >= ;
 : 2DROP DROP DROP ;
@@ -267,9 +265,8 @@
 : NIP ( x y -- y ) SWAP DROP ;
 : TUCK ( x y -- y x y ) SWAP OVER ;
 : PICK ( x_u ... x_1 x_0 u -- x_u ... x_1 x_0 x_u )
-	1+		( add one because of 'u' on the stack )
 	4 *		( multiply by the word size )
-	DSP@ +		( add to the stack pointer )
+	ADSP@ +		( add to the stack pointer )
 	@    		( and fetch )
 ;
 
@@ -340,15 +337,17 @@
 	Very useful for debugging.
 )
 : .S		( -- )
-	DSP@		( get current stack pointer )
+        0   ( Ensure register top is in memory )
+	ADSP@		( get current stack pointer )
 	BEGIN
-		DUP S0 @ <
+		DUP S0 @ 4- < ( Ignore dummy entry at bottom of stack )
 	WHILE
 		DUP @ U.	( print the stack element )
 		SPACE
 		4+		( move up )
 	REPEAT
 	DROP
+	DROP ( put top of stack back )
 ;
 
 ( This word returns the width (in characters) of an unsigned number in the current base )
@@ -436,8 +435,8 @@
 
 ( DEPTH returns the depth of the stack. )
 : DEPTH		( -- n )
-	S0 @ DSP@ -
-	4-			( adjust because S0 was on the stack when we pushed DSP )
+	S0 @ ADSP@ -
+	4-			( adjust because S0 was on the stack when we pushed ADSP )
 ;
 
 (
@@ -1302,7 +1301,7 @@
 ;
 
 : CATCH		( xt -- exn? )
-	DSP@ 4+ >R		( save parameter stack pointer (+4 because of xt) on the return stack )
+	ADSP@ 4+ >R		( save parameter stack pointer (+4 because of xt) on the return stack )
 	' EXCEPTION-MARKER 4+	( push the address of the RDROP inside EXCEPTION-MARKER ... )
 	>R			( ... on to the return stack so it acts like a return address )
 	EXECUTE			( execute the nested function )
@@ -1326,7 +1325,7 @@
 				4-			( reserve space on the stack to store n )
 				SWAP OVER		( dsp n dsp )
 				!			( write n on the stack )
-				DSP! EXIT		( restore the parameter stack pointer, immediately exit )
+				ADSP! EXIT		( restore the parameter stack pointer, immediately exit )
 			THEN
 			4+
 		REPEAT
@@ -1358,7 +1357,7 @@
 	WHILE
 		DUP @			( get the return stack entry )
 		CASE
-		' EXCEPTION-MARKER 4+ OF	( is it the exception stack frame? )
+		' EXCEPTION-MARKER 4+ OF	(  is it the exception stack frame? )
 			." CATCH ( DSP="
 			4+ DUP @ U.		( print saved stack pointer )
 			." ) "
